@@ -57,7 +57,7 @@ def timed_get(path, timeout=300):
 
 
 def cog(product, h):
-    return f"/cog/{product}/{hours_ago(h)}Z"
+    return f"/cog?product={product}&time={hours_ago(h)}Z"
 
 
 def _validate(fmt, body, product=None):
@@ -78,9 +78,9 @@ def test_concurrent_identical(r):
     cases = [
         ("cog winds", cog("winds", 7), "cog", "winds"),
         ("cog temp_2m", cog("temp_2m", 7), "cog", "temp_2m"),
-        ("hrrr winds gribjson", f"/hrrr/winds/gribjson/{hours_ago(7)}", "gribjson", "winds"),
-        ("hrrr temp_2m geotiff", f"/hrrr/temp_2m/geotiff/{hours_ago(7)}", "geotiff", "temp_2m"),
-        ("hrrr winds png", f"/hrrr/winds/png/{hours_ago(7)}", "png", "winds"),
+        ("hrrr winds gribjson", f"/data?model=hrrr&product=winds&format=gribjson&time={hours_ago(7)}", "gribjson", "winds"),
+        ("hrrr temp_2m geotiff", f"/data?model=hrrr&product=temp_2m&format=geotiff&time={hours_ago(7)}", "geotiff", "temp_2m"),
+        ("hrrr winds png", f"/data?model=hrrr&product=winds&format=png&time={hours_ago(7)}", "png", "winds"),
     ]
     for name, path, fmt, product in cases:
         with ThreadPoolExecutor(max_workers=n) as ex:
@@ -113,7 +113,7 @@ def test_concurrent_png_renders(r):
     the batch keeps several in flight at once. Catches the crash/exception failure
     mode of thread-unsafe rendering (a 500 or an empty/invalid body)."""
     T = hours_ago(6)
-    specs = [(p, f"/hrrr/{p}/png/{T}") for p in HRRR_PRODUCTS]
+    specs = [(p, f"/data?model=hrrr&product={p}&format=png&time={T}") for p in HRRR_PRODUCTS]
     batch = specs * 3  # overlap renders even as some get cached
     with ThreadPoolExecutor(max_workers=max(8, CONCURRENCY)) as ex:
         results = list(ex.map(lambda s: (s[0], timed_get(s[1])), batch))
@@ -141,8 +141,8 @@ def _slam_specs():
         for p in HRRR_PRODUCTS:
             specs.append((cog(p, h), "cog", p))
     for h in range(5, 13):
-        specs.append((f"/hrrr/winds/gribjson/{hours_ago(h)}", "gribjson", "winds"))
-        specs.append((f"/gfs/gribjson/{hours_ago(h)}", "gribjson", "winds"))
+        specs.append((f"/data?model=hrrr&product=winds&format=gribjson&time={hours_ago(h)}", "gribjson", "winds"))
+        specs.append((f"/data?model=gfs&format=gribjson&time={hours_ago(h)}", "gribjson", "winds"))
     # duplicate the list so the same keys collide under concurrency (contention)
     return specs + specs
 
@@ -191,7 +191,7 @@ def _cache_bytes():
 
 
 def _cog_cache_basename(product, ts):
-    """The on-disk COG filename the server writes for ``/cog/<product>/<ts>``.
+    """The on-disk COG filename the server writes for ``/cog?product=<product>&time=<ts>``.
 
     Mirrors ``process_data._cog_filename`` (kept in sync by hand rather than
     imported, since the stress test may run from a host without the server's
@@ -295,8 +295,8 @@ def test_lru_eviction(r):
     # a different cache key than the one we seeded.
     victim_ts = hours_ago(46)   # requested once, never touched again -> oldest
     recent_ts = hours_ago(4)    # kept in use throughout the fill -> survives
-    victim = f"/cog/temp_2m/{victim_ts}Z"
-    recent = f"/cog/winds/{recent_ts}Z"
+    victim = f"/cog?product=temp_2m&time={victim_ts}Z"
+    recent = f"/cog?product=winds&time={recent_ts}Z"
     victim_name = _cog_cache_basename("temp_2m", victim_ts)
     recent_name = _cog_cache_basename("winds", recent_ts)
 

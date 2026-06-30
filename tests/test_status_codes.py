@@ -26,27 +26,28 @@ def run(r):
 
     r.section("Bad requests should return 400")
     # gribjson is velocity-only; scalar products must be rejected, not return []
-    _expect_status(r, "scalar gribjson -> 400", f"/hrrr/temp_2m/gribjson/{T}", 400)
-    _expect_status(r, "unknown product -> 400", f"/hrrr/bogus/png/{T}", 400)
-    _expect_status(r, "unknown model -> 400", f"/mars/gribjson/{T}", 400)
+    _expect_status(r, "scalar gribjson -> 400", f"/data?model=hrrr&product=temp_2m&format=gribjson&time={T}", 400)
+    _expect_status(r, "unknown product -> 400", f"/data?model=hrrr&product=bogus&format=png&time={T}", 400)
+    _expect_status(r, "unknown model -> 400", f"/data?model=mars&format=gribjson&time={T}", 400)
     _expect_status(r, "malformed projwin (3 vals) -> 400",
-                   f"/hrrr/winds/gribjson/{T}/1,2,3", 400)
+                   f"/data?model=hrrr&product=winds&format=gribjson&time={T}&projwin=1,2,3", 400)
 
     r.section("Path-injection / malformed input should return 400 (Sonar S2083)")
-    _expect_status(r, "COG unknown product -> 400", f"/cog/bogus/{T}Z", 400)
-    _expect_status(r, "COG product traversal -> 400", f"/cog/..%2f..%2fetc/{T}Z", 400)
+    _expect_status(r, "COG unknown product -> 400", f"/cog?product=bogus&time={T}Z", 400)
+    _expect_status(r, "COG missing product -> 400", f"/cog?time={T}Z", 400)
     # Malformed COG time must be a clean 400 (parse_cog_time), not a 500. Regression
     # guard: serve_cog used to call fromisoformat outside its try and 500 on bad input.
-    _expect_status(r, "COG malformed time -> 400", "/cog/winds/2024-13-45T99:00:00Z", 400)
-    _expect_status(r, "projwin non-numeric -> 400", f"/gfs/gribjson/{T}/a,b,c,d", 400)
-    _expect_status(r, "projwin dotdot -> 400", f"/gfs/gribjson/{T}/..,..,..,..", 400)
-    _expect_status(r, "unknown format -> 400", f"/gfs/xml/{T}", 400)
+    _expect_status(r, "COG malformed time -> 400", "/cog?product=winds&time=2024-13-45T99:00:00Z", 400)
+    _expect_status(r, "projwin non-numeric -> 400", f"/data?model=gfs&format=gribjson&time={T}&projwin=a,b,c,d", 400)
+    _expect_status(r, "projwin dotdot -> 400", f"/data?model=gfs&format=gribjson&time={T}&projwin=..,..,..,..", 400)
+    _expect_status(r, "unknown format -> 400", f"/data?model=gfs&format=xml&time={T}", 400)
+    _expect_status(r, "missing required params -> 400", "/data?model=hrrr", 400)
 
     r.section("Valid requests should return 200")
-    _expect_status(r, "winds gribjson -> 200", f"/hrrr/winds/gribjson/{T}", 200)
-    _expect_status(r, "scalar geotiff -> 200", f"/hrrr/temp_2m/geotiff/{T}", 200)
+    _expect_status(r, "winds gribjson -> 200", f"/data?model=hrrr&product=winds&format=gribjson&time={T}", 200)
+    _expect_status(r, "scalar geotiff -> 200", f"/data?model=hrrr&product=temp_2m&format=geotiff&time={T}", 200)
     _expect_status(r, "gfs gribjson +projwin -> 200",
-                   f"/gfs/gribjson/{T}/{PROJWIN}", 200)
+                   f"/data?model=gfs&format=gribjson&time={T}&projwin={PROJWIN}", 200)
 
 
 if __name__ == "__main__":

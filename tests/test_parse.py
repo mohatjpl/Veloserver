@@ -56,10 +56,10 @@ def test_safe_path(r):
 def test_is_allowed_path_info(r):
     r.section("is_allowed_path_info (route allowlist, S2083)")
     ok = [
-        "/hrrr/winds/gribjson/2024-03-05T19:00:00",
-        "/cog/winds/2024-03-05T19:00:00Z",
-        "/hrrr/winds/gribjson/2024-03-05T19:00:00/-105,41,-104,40",  # bbox commas+minus
-        "/gfs/gribjson/2024-03-05T19:00:00/+1,+2",                   # plus sign
+        "/data",                                                     # query-param data route
+        "/cog",                                                      # query-param COG route
+        "/swagger.yaml",
+        "/swagger/ui",
         "",                                                          # empty matches \A...\Z*
         "/",
     ]

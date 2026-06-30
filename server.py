@@ -7,11 +7,6 @@ bottle_app = Bottle()
 dataApp = App()
 
 
-@bottle_app.route('/cog/<product>/<time_param:path>')
-def cog_path(product, time_param):
-    return dataApp.serve_cog(product, time_param)
-
-
 def enable_cors(fn):
     def _enable_cors(*args, **kwargs):
         # set CORS headers
@@ -25,7 +20,6 @@ def enable_cors(fn):
             return fn(*args, **kwargs)
 
     return _enable_cors
-
 
 @bottle_app.hook('before_request')
 def strip_path():
@@ -60,44 +54,30 @@ def server_swagger(filepath):
     return static_file(filepath, root='./swagger/')
 
 
-@bottle_app.route('/<model>/<format>/<datetime>')
+@bottle_app.route('/cog')
 @enable_cors
-def get_data(model, format, datetime):
-    (output_format, data) = dataApp.get_data(model,
-                                             format,
-                                             datetime,
-                                             None)
+def cog():
+    product = request.params.get('product')
+    time_param = request.params.get('time')
+    if not product or not time_param:
+        return text_error(400, 'Required query parameters: product, time')
+    return dataApp.serve_cog(product, time_param)
+
+
+@bottle_app.route('/data')
+@enable_cors
+def get_data():
+    model   = request.params.get('model')
+    fmt     = request.params.get('format')
+    dt      = request.params.get('time')
+    product = request.params.get('product', 'winds')
+    projwin = request.params.get('projwin')
+    if not all([model, fmt, dt]):
+        return text_error(400, 'Required query parameters: model, format, time')
+    projwin = projwin.split(',') if projwin else None
+    (output_format, data) = dataApp.get_data(model, fmt, dt, projwin, product)
     response.content_type = output_format
     return data
-
-
-@bottle_app.route('/<model>/<seg2>/<seg3>/<seg4>')
-@enable_cors
-def get_data_four_segment(model, seg2, seg3, seg4):
-    """Two different 4-part URLs land here. A bbox shape (model/format/datetime/projwin)
-    and a product shape (model/product/format/datetime) look the same to the router, so
-    we tell them apart by content, since only a bbox ever has a comma."""
-    if ',' in seg4:
-        fmt, dt, projwin = seg2, seg3, seg4.split(',')
-        if len(projwin) != 4:
-            return text_error(400, 'Invalid projwin. Must be in format: ulx,uly,lrx,lry')
-        (output_format, data) = dataApp.get_data(model, fmt, dt, projwin)
-    else:
-        product, fmt, dt = seg2, seg3, seg4
-        (output_format, data) = dataApp.get_data(model, fmt, dt, None, product)
-    response.content_type = output_format
-    return data
-
-
-@bottle_app.route('/<model>/<product>/<format>/<datetime>/<projwin>')
-@enable_cors
-def get_data_product_projwin(model, product, format, datetime, projwin):
-    projwin = projwin.split(',')
-    if len(projwin) == 4:
-        (output_format, data) = dataApp.get_data(model, format, datetime, projwin, product)
-        response.content_type = output_format
-        return data
-    return text_error(400, 'Invalid projwin. Must be in format: ulx,uly,lrx,lry')
 
 
 # Run several worker processes, each with a few threads. A fresh request ties up
