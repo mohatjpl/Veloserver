@@ -37,12 +37,12 @@ def test_lon360(r):
 
 def test_cog_filename(r):
     r.section("process_data COG cache-filename scheme")
-    prefix = _cog_name_prefix("winds", "2024-03-05", "19:00:00")
+    prefix = _cog_name_prefix("wind_vector", "2024-03-05", "19:00:00")
     r.check("name prefix strips colons from hour",
-            prefix == "hrrr-winds-2024-03-05T190000", f"got {prefix!r}")
-    fname = _cog_filename("winds", "2024-03-05", "19:00:00")
+            prefix == "hrrr-wind_vector-2024-03-05T190000", f"got {prefix!r}")
+    fname = _cog_filename("wind_vector", "2024-03-05", "19:00:00")
     r.check("cog filename = prefix + -3857-cog.tif",
-            fname == "hrrr-winds-2024-03-05T190000-3857-cog.tif", f"got {fname!r}")
+            fname == "hrrr-wind_vector-2024-03-05T190000-3857-cog.tif", f"got {fname!r}")
     r.check("filename has no path separators (single cache file)",
             "/" not in fname and os.sep not in fname, f"got {fname!r}")
     r.check("scalar product flows through the same scheme",

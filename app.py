@@ -45,7 +45,7 @@ class App():
         if not os.path.exists(config.APP_CONFIG["CACHE_DIR"]):
             os.makedirs(config.APP_CONFIG["CACHE_DIR"])
 
-    def get_data(self, model, format, iso_string, projwin=None, product='winds'):
+    def get_data(self, model, format, iso_string, projwin=None, product='wind_vector'):
         # Validate all user-supplied tokens before they reach any path/subprocess.
         projwin, error = validate_request(model, format, projwin, product)
         if error is not None:

@@ -37,9 +37,10 @@ recursed and pruned, the optional TTL pass, and `CACHE_MAX_BYTES <= 0` disabling
 eviction.
 
 **`test_endpoints.py` — every route returns the right artifact**
-HRRR velocity (`gribjson` U/V), all 8 products as `geotiff`/`png`, the COG route
-for all 8 products (winds = 3-band u/v/speed, scalars = 1 band), GFS `gribjson`,
-the default routes, and `+projwin` subsets. Each response is validated as real
+HRRR velocity (`gribjson` U/V from `wind_vector`), all products as `geotiff`/`png`,
+and `format=cog` for all products (`wind_vector` = 2-band u/v, `wind_u`/`wind_v`/
+`wind_speed` = the single named band, scalars = 1 band), GFS `gribjson`, the
+default routes, and `+projwin` subsets. Each response is validated as real
 JSON / GeoTIFF / PNG / COG. ECMWF is skipped unless `VELOSERVER_ECMWF=1`.
 
 **`test_status_codes.py` — error handling**
@@ -69,7 +70,7 @@ Set `VELOSERVER_CACHE_DIR` to the server's cache dir to start from an empty
 cache. The test time is auto-computed as a top-of-hour UTC time ~4h ago (within
 HRRR/GFS publish latency).
 
-## Configuration (rarely needed)
+## Configuration
 
 | Env var | Default | Purpose |
 |---|---|---|

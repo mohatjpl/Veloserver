@@ -18,7 +18,15 @@ import rasterio
 
 from modules.parse import _safe_path
 from modules.concurrency import _atomic_output
-from config import HRRR_PRODUCTS, WINDS_BAND_COLORMAPS, NODATA
+from config import HRRR_PRODUCTS, NODATA
+
+# Band names each product writes, in order. Others keep one band named for the product.
+_COG_BAND_NAMES = {
+    'wind_u':      ['u'],
+    'wind_v':      ['v'],
+    'wind_speed':  ['speed'],
+    'wind_vector': ['u', 'v'],
+}
 
 # These producers receive paths the caller already built from validated tokens and
 # confined with _safe_path, so they trust their inputs (clean-at-the-boundary):
@@ -38,14 +46,84 @@ def to_gribjson(grib_path, out_path, timeout=None):
     return out_path
 
 
-def to_geotiff(grib_path, out_path):
-    """Reproject a GRIB to an EPSG:3857 GeoTIFF. Returns out_path."""
+def to_geotiff(grib_path, out_path, product):
+    """Reproject a GRIB to an EPSG:3857 GeoTIFF with the same band derivation as
+    the COG. Returns out_path."""
     if os.path.exists(out_path):
         return out_path
     with _atomic_output(out_path) as tmp:
-        subprocess.run(['gdalwarp', '-of', 'GTiff', '-t_srs', 'EPSG:3857', grib_path, tmp])
+        _warp_to_3857(grib_path, tmp)
+        _derive_bands(tmp, product)
     print('Created', out_path)
     return out_path
+
+
+def _warp_to_3857(grib_path, out_tif):
+    """Warp a GRIB to a tiled EPSG:3857 Float32 GeoTIFF; shared first step for
+    to_geotiff and the COG."""
+    subprocess.run([
+        'gdalwarp', '-of', 'GTiff', '-t_srs', 'EPSG:3857', '-r', 'near',
+        '-ot', 'Float32', '-srcnodata', 'nan', '-dstnodata', str(NODATA),
+        '-co', 'TILED=YES', '-co', 'COMPRESS=LZW',
+        '-co', 'BLOCKXSIZE=512', '-co', 'BLOCKYSIZE=512',
+        grib_path, out_tif
+    ], check=True)
+
+
+def _derive_bands(tif_path, product):
+    """Rewrite tif_path in place with the product's derived bands and label them.
+    The warped source has u in band 1, v in band 2. wind_vector -> (u, v);
+    wind_u/wind_v -> the component; wind_speed -> sqrt(u²+v²); smoke_massden ->
+    kg/m³ scaled to µg/m³. Others pass through unchanged."""
+    needs_derivation = product in _COG_BAND_NAMES or product == 'smoke_massden'
+    if needs_derivation:
+        base = os.path.dirname(tif_path)
+        stem = os.path.basename(tif_path)
+        uid = f'{os.getpid()}-{threading.get_ident()}'
+        tmp = _safe_path(base, f'{stem}-derive-{uid}.tif')
+        with rasterio.open(tif_path) as src:
+            nodata = src.nodata
+            b1 = src.read(1).astype(np.float32)
+            b2 = src.read(2).astype(np.float32) if src.count >= 2 else np.zeros_like(b1)
+            profile = src.profile.copy()
+
+        def masked(a):
+            return (a == nodata) if nodata is not None else np.zeros(a.shape, dtype=bool)
+
+        if product == 'wind_vector':
+            m = masked(b1) | masked(b2)
+            b1[m] = NODATA
+            b2[m] = NODATA
+            bands = [b1, b2]
+        elif product == 'wind_u':
+            b1[masked(b1)] = NODATA
+            bands = [b1]
+        elif product == 'wind_v':
+            b2[masked(b2)] = NODATA
+            bands = [b2]
+        elif product == 'wind_speed':
+            speed = np.sqrt(b1**2 + b2**2)
+            speed[masked(b1) | masked(b2)] = NODATA
+            bands = [speed]
+        else:  # smoke_massden: native kg/m³ -> conventional µg/m³
+            m = masked(b1)
+            b1 = b1 * 1e9
+            b1[m] = NODATA
+            bands = [b1]
+
+        profile.update(count=len(bands), nodata=NODATA)
+        with rasterio.open(tmp, 'w', **profile) as dst:
+            for i, band in enumerate(bands, start=1):
+                dst.write(band, i)
+        os.remove(tif_path)
+        os.rename(tmp, tif_path)
+
+    # Label bands (carried through gdal_translate into the COG).
+    band_names = _COG_BAND_NAMES.get(product, [product])
+    with rasterio.open(tif_path, 'r+') as dst:
+        for i, name in enumerate(band_names, start=1):
+            if i <= dst.count:
+                dst.set_band_description(i, name)
 
 
 def to_png(grib_path, out_path, product):
@@ -71,72 +149,20 @@ def to_cog(grib_path, out_path, product):
 
 
 def _create_cog(grib_path, output_file, product):
-    """Reproject a GRIB to EPSG:3857, derive bands (u/v/speed for winds, kg/m^3 ->
-    µg/m^3 for smoke), build overviews, and write the COG to output_file. Manages
-    its own intermediate raster (confined to output_file's dir, S8707)."""
+    """Warp a GRIB to EPSG:3857, derive the product's bands (shared with
+    to_geotiff via _derive_bands), build overviews, and wrap it as the COG at
+    output_file. Manages its own intermediate raster (confined to output_file's
+    dir, S8707)."""
     base = os.path.dirname(output_file)
     stem = os.path.basename(output_file)
     uid = f'{os.getpid()}-{threading.get_ident()}'
     tmp_tif = _safe_path(base, f'{stem}-warp-{uid}.tif')
     try:
-        # Step 1: warp to EPSG:3857, Float32 with nodata.
-        subprocess.run([
-            'gdalwarp', '-of', 'GTiff', '-t_srs', 'EPSG:3857', '-r', 'near',
-            '-ot', 'Float32', '-srcnodata', 'nan', '-dstnodata', str(NODATA),
-            '-co', 'TILED=YES', '-co', 'COMPRESS=LZW',
-            '-co', 'BLOCKXSIZE=512', '-co', 'BLOCKYSIZE=512',
-            grib_path, tmp_tif
-        ], check=True)
+        _warp_to_3857(grib_path, tmp_tif)
+        _derive_bands(tmp_tif, product)
 
-        if product == 'winds':
-            tmp_uvs = _safe_path(base, f'{stem}-uvs-{uid}.tif')
-            with rasterio.open(tmp_tif) as src:
-                u = src.read(1).astype(np.float32)
-                v = src.read(2).astype(np.float32) if src.count >= 2 else np.zeros_like(u)
-                nodata = src.nodata
-                mask = (u == nodata) | (v == nodata) if nodata is not None else np.zeros_like(u, dtype=bool)
-                speed = np.sqrt(u**2 + v**2)
-                u[mask] = NODATA
-                v[mask] = NODATA
-                speed[mask] = NODATA
-                profile = src.profile.copy()
-            profile.update(count=3, nodata=NODATA)
-            with rasterio.open(tmp_uvs, 'w', **profile) as dst:
-                dst.write(u, 1)
-                dst.write(v, 2)
-                dst.write(speed, 3)
-            os.remove(tmp_tif)
-            os.rename(tmp_uvs, tmp_tif)
-
-        elif product == 'smoke_massden':
-            # HRRR near-surface smoke (MASSDEN) is native kg/m^3; convert to the
-            # conventional µg/m^3 to make it interpretable with other pm 2.5 products.
-            tmp_scaled = _safe_path(base, f'{stem}-scaled-{uid}.tif')
-            with rasterio.open(tmp_tif) as src:
-                band = src.read(1).astype(np.float32)
-                nodata = src.nodata
-                mask = (band == nodata) if nodata is not None else np.zeros_like(band, dtype=bool)
-                band = band * 1e9
-                band[mask] = NODATA
-                profile = src.profile.copy()
-            profile.update(count=1, nodata=NODATA)
-            with rasterio.open(tmp_scaled, 'w', **profile) as dst:
-                dst.write(band, 1)
-            os.remove(tmp_tif)
-            os.rename(tmp_scaled, tmp_tif)
-
-        # Label bands so the COG is self-describing for downstream consumers
-        # (gdal_translate carries these descriptions through into the final COG).
-        band_names = list(WINDS_BAND_COLORMAPS) if product == 'winds' else [product]
-        with rasterio.open(tmp_tif, 'r+') as dst:
-            for i, name in enumerate(band_names, start=1):
-                if i <= dst.count:
-                    dst.set_band_description(i, name)
-
-        # Step 2: build overviews with nearest-neighbor to keep meaning at the pixel level.
+        # Nearest-neighbor overviews (keep pixel meaning), then wrap as a COG.
         subprocess.run(['gdaladdo', '-r', 'nearest', tmp_tif, '2', '4', '8', '16', '32'], check=True)
-
-        # Step 3: convert to the COG, written into output_file (to_cog's atomic temp).
         subprocess.run([
             'gdal_translate', '-of', 'GTiff',
             '-co', 'TILED=YES', '-co', 'COMPRESS=LZW', '-co', 'COPY_SRC_OVERVIEWS=YES',
@@ -160,7 +186,8 @@ def _create_png(grib_file, output_file, product):
 
     with rasterio.open(tmp_tif) as src:
         nodata = src.nodata
-        if product == 'winds' and src.count >= 2:
+        if product in ('wind_vector', 'wind_speed') and src.count >= 2:
+            # Both the vector field and the speed product render as a speed image.
             u = src.read(1).astype(float)
             v = src.read(2).astype(float)
             if nodata is not None:
@@ -168,7 +195,9 @@ def _create_png(grib_file, output_file, product):
                 v = np.where(v == nodata, np.nan, v)
             data = np.sqrt(u**2 + v**2)
         else:
-            data = src.read(1).astype(float)
+            # wind_v is band 2; every other single-band product renders band 1.
+            band_index = 2 if (product == 'wind_v' and src.count >= 2) else 1
+            data = src.read(band_index).astype(float)
             if nodata is not None:
                 data = np.where(data == nodata, np.nan, data)
 

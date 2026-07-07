@@ -35,7 +35,7 @@ def test_safe_path(r):
     abase = os.path.abspath(base)
     try:
         r.check("plain filename joins under base",
-                parse._safe_path(base, "hrrr-winds.tif") == os.path.join(abase, "hrrr-winds.tif"),
+                parse._safe_path(base, "hrrr-wind_vector.tif") == os.path.join(abase, "hrrr-wind_vector.tif"),
                 "")
         r.check("nested filename under base allowed",
                 parse._safe_path(base, "sub/f.tif") == os.path.join(abase, "sub/f.tif"), "")
@@ -79,16 +79,16 @@ def test_is_allowed_path_info(r):
 def test_validate_request(r):
     r.section("validate_request (model/format/product/projwin)")
     # valid, no projwin
-    pj, err = parse.validate_request("hrrr", "gribjson", None, "winds")
-    r.check("valid hrrr/gribjson/winds -> no error", err is None and pj is None, f"err={err!r}")
+    pj, err = parse.validate_request("hrrr", "gribjson", None, "wind_vector")
+    r.check("valid hrrr/gribjson/wind_vector -> no error", err is None and pj is None, f"err={err!r}")
     # valid with projwin -> parsed to floats
-    pj, err = parse.validate_request("hrrr", "geotiff", ["1", "2", "3", "4"], "winds")
+    pj, err = parse.validate_request("hrrr", "geotiff", ["1", "2", "3", "4"], "wind_vector")
     r.check("valid projwin parsed to floats", err is None and pj == [1.0, 2.0, 3.0, 4.0], f"pj={pj} err={err!r}")
     # bad model
-    _, err = parse.validate_request("mars", "gribjson", None, "winds")
+    _, err = parse.validate_request("mars", "gribjson", None, "wind_vector")
     r.check("unknown model -> error", err is not None and "model" in err.lower(), f"err={err!r}")
     # bad format
-    _, err = parse.validate_request("hrrr", "xml", None, "winds")
+    _, err = parse.validate_request("hrrr", "xml", None, "wind_vector")
     r.check("unknown format -> error", err is not None and "format" in err.lower(), f"err={err!r}")
     # bad product (hrrr only)
     _, err = parse.validate_request("hrrr", "gribjson", None, "bogus")
@@ -97,26 +97,26 @@ def test_validate_request(r):
     _, err = parse.validate_request("gfs", "gribjson", None, "bogus")
     r.check("product ignored for gfs -> no error", err is None, f"err={err!r}")
     # projwin wrong count
-    _, err = parse.validate_request("hrrr", "geotiff", ["1", "2", "3"], "winds")
+    _, err = parse.validate_request("hrrr", "geotiff", ["1", "2", "3"], "wind_vector")
     r.check("projwin with 3 values -> error", err is not None and "projwin" in err.lower(), f"err={err!r}")
     # projwin non-numeric
-    _, err = parse.validate_request("hrrr", "geotiff", ["a", "b", "c", "d"], "winds")
+    _, err = parse.validate_request("hrrr", "geotiff", ["a", "b", "c", "d"], "wind_vector")
     r.check("projwin non-numeric -> error", err is not None and "projwin" in err.lower(), f"err={err!r}")
     # projwin non-finite (inf)
-    _, err = parse.validate_request("hrrr", "geotiff", ["1", "2", "3", "inf"], "winds")
+    _, err = parse.validate_request("hrrr", "geotiff", ["1", "2", "3", "inf"], "wind_vector")
     r.check("projwin with inf -> error", err is not None and "projwin" in err.lower(), f"err={err!r}")
     # projwin with nan
-    _, err = parse.validate_request("hrrr", "geotiff", ["1", "2", "3", "nan"], "winds")
+    _, err = parse.validate_request("hrrr", "geotiff", ["1", "2", "3", "nan"], "wind_vector")
     r.check("projwin with nan -> error", err is not None and "projwin" in err.lower(), f"err={err!r}")
 
 
 def test_product_helpers(r):
     r.section("is_valid_product / canonical_product")
-    r.check("is_valid_product('winds') True", parse.is_valid_product("winds") is True, "")
+    r.check("is_valid_product('wind_vector') True", parse.is_valid_product("wind_vector") is True, "")
     r.check("is_valid_product('bogus') False", parse.is_valid_product("bogus") is False, "")
     r.check("canonical_product('temp_2m') round-trips", parse.canonical_product("temp_2m") == "temp_2m", "")
     # returns the value FROM the allowlist (identity / laundering), not the raw arg
-    raw = "".join(["wi", "nds"])  # equal-by-value but a distinct object
+    raw = "".join(["wind_vec", "tor"])  # equal-by-value but a distinct object
     out = parse.canonical_product(raw)
     r.check("canonical_product returns a known key", out in parse.HRRR_PRODUCTS, f"out={out!r}")
     r.check("canonical_product('bogus') raises ValueError",
@@ -173,10 +173,10 @@ def test_parse_cog_time(r):
 
 
 def test_hrrr_format_error(r):
-    r.section("hrrr_format_error (gribjson is winds-only)")
+    r.section("hrrr_format_error (gribjson is wind_vector-only)")
     r.check("scalar + gribjson -> message",
             parse.hrrr_format_error("temp_2m", "gribjson") is not None, "")
-    r.check("winds + gribjson -> None", parse.hrrr_format_error("winds", "gribjson") is None, "")
+    r.check("wind_vector + gribjson -> None", parse.hrrr_format_error("wind_vector", "gribjson") is None, "")
     r.check("scalar + geotiff -> None", parse.hrrr_format_error("temp_2m", "geotiff") is None, "")
     r.check("scalar + png -> None", parse.hrrr_format_error("temp_2m", "png") is None, "")
 

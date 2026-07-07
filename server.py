@@ -54,26 +54,20 @@ def server_swagger(filepath):
     return static_file(filepath, root='./swagger/')
 
 
-@bottle_app.route('/cog')
-@enable_cors
-def cog():
-    product = request.params.get('product')
-    time_param = request.params.get('time')
-    if not product or not time_param:
-        return text_error(400, 'Required query parameters: product, time')
-    return dataApp.serve_cog(product, time_param)
-
-
 @bottle_app.route('/data')
 @enable_cors
 def get_data():
     model   = request.params.get('model')
     fmt     = request.params.get('format')
     dt      = request.params.get('time')
-    product = request.params.get('product', 'winds')
+    product = request.params.get('product', 'wind_vector')
     projwin = request.params.get('projwin')
     if not all([model, fmt, dt]):
         return text_error(400, 'Required query parameters: model, format, time')
+    if fmt == 'cog':
+        if model != 'hrrr':
+            return text_error(400, "format 'cog' is only available for model 'hrrr'")
+        return dataApp.serve_cog(product, dt)
     projwin = projwin.split(',') if projwin else None
     (output_format, data) = dataApp.get_data(model, fmt, dt, projwin, product)
     response.content_type = output_format

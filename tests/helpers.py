@@ -7,7 +7,6 @@ NOAA HRRR / NOMADS GFS. Bring it up with `docker compose up -d` first.
 
 import os
 import re
-import math
 import json
 import shutil
 import tempfile
@@ -17,7 +16,6 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from config import NODATA  # noqa: E402
 from datetime import datetime, timedelta, timezone
 
 BASE = os.environ.get("VELOSERVER_URL", "http://localhost:8104")
@@ -27,8 +25,9 @@ BASE = os.environ.get("VELOSERVER_URL", "http://localhost:8104")
 OUT = os.environ.get("VELOSERVER_TEST_OUT") or tempfile.mkdtemp(prefix="velotest-")
 PROJWIN = "-105,41,-104,40"  # small Colorado box: ulx,uly,lrx,lry
 
-HRRR_PRODUCTS = ["winds", "temp_2m", "pbl_height", "smoke_massden",
-                 "precip_rate", "rh_2m", "wind_gust", "dewpoint_2m"]
+HRRR_PRODUCTS = ["wind_u", "wind_v", "wind_speed", "wind_vector", "temp_2m",
+                 "pbl_height", "smoke_massden", "precip_rate", "rh_2m",
+                 "wind_gust", "dewpoint_2m"]
 HRRR_FORMATS = ["gribjson", "geotiff", "png"]
 
 _HAS_GDALINFO = subprocess.run(["which", "gdalinfo"],
@@ -105,7 +104,7 @@ def validate_gribjson(body, product=None):
         return False, "JSON is not a list"
     n = len(d)
     params = [r.get("header", {}).get("parameterNumberName", "?") for r in d]
-    expected = 2 if product == "winds" else 1  # winds carries U and V
+    expected = 2 if product == "wind_vector" else 1  # wind_vector carries U and V
     return n >= expected, f"records={n} params={params}"
 
 
@@ -133,91 +132,34 @@ def validate_png(body):
     return True, f"png bytes={len(body)}"
 
 
-_NODATA = float(NODATA)
+# Expected COG band descriptions per product. wind_vector is the 2-band u/v
+# vector field; wind_u/wind_v/wind_speed are single named bands; every other
+# (scalar) product is a single band labeled with the product name.
+_COG_BAND_DESCS = {
+    "wind_u":      ["u"],
+    "wind_v":      ["v"],
+    "wind_speed":  ["speed"],
+    "wind_vector": ["u", "v"],
+}
 
 
-def _uvspeed_at_pixel(p, x, y):
-    """Sample one pixel. Returns 'skip' (no/nodata value), 'ok' (relation holds),
-    or an error string when band3 != sqrt(u^2 + v^2)."""
-    res = subprocess.run(["gdallocationinfo", "-valonly", p, str(x), str(y)],
-                         capture_output=True, text=True)
-    vals = res.stdout.split()
-    if len(vals) != 3:
-        return "skip"
-    try:
-        u, v, speed = (float(val) for val in vals)
-    except ValueError:
-        return "skip"
-    if _NODATA in (u, v, speed):
-        return "skip"
-    expected = math.hypot(u, v)
-    if abs(speed - expected) > 0.05 + 1e-3 * expected:
-        return (f"band3 != sqrt(u^2+v^2) at pixel ({x},{y}): "
-                f"u={u:.3f} v={v:.3f} speed={speed:.3f} expected={expected:.3f}")
-    return "ok"
-
-
-def _verify_winds_pixels(p, w, h):
-    """Sample a grid of interior pixels and confirm band3 == hypot(u, v)."""
-    checked = 0
-    for fx in (0.25, 0.4, 0.5, 0.6, 0.75):
-        for fy in (0.3, 0.5, 0.7):
-            result = _uvspeed_at_pixel(p, int(w * fx), int(h * fy))
-            if result == "skip":
-                continue
-            if result != "ok":
-                return False, result
-            checked += 1
-    if checked == 0:
-        return False, "no valid (non-nodata) pixels found to verify u/v/speed"
-    return True, (f"bands [u, v, speed]; speed==hypot(u,v) verified at "
-                  f"{checked} pixels")
-
-
-def validate_cog_winds(body):
-    """The winds COG must be a 3-band raster with band1=u, band2=v, band3=speed,
-    where speed == sqrt(u^2 + v^2). Verified by sampling interior pixels."""
+def validate_cog(body, product):
+    """A COG must be an EPSG:3857 TIFF whose band descriptions match the product's
+    layout (see _COG_BAND_DESCS; scalars default to a single [product] band)."""
     ok, detail = validate_tiff(body)
     if not ok:
         return False, detail
     if not _HAS_GDALINFO:
-        return True, detail + " (u/v/speed check skipped: no gdal tools)"
-
+        return True, detail + " (band check skipped: no gdal tools)"
     os.makedirs(OUT, exist_ok=True)
-    p = os.path.join(OUT, "cogwinds.tif")
-    with open(p, "wb") as f:
-        f.write(body)
-
-    info = subprocess.run(["gdalinfo", p], capture_output=True, text=True).stdout
-    bands = info.count("Band ")
-    if bands != 3:
-        return False, f"expected 3 bands (u, v, speed), got {bands}"
-    descs = re.findall(r"Description = (.+)", info)
-    if descs != ["u", "v", "speed"]:
-        return False, f"band descriptions {descs}, expected ['u', 'v', 'speed']"
-    m = re.search(r"Size is (\d+), (\d+)", info)
-    if not m:
-        return False, "could not parse raster size"
-    w, h = int(m.group(1)), int(m.group(2))
-
-    return _verify_winds_pixels(p, w, h)
-
-
-def validate_cog_scalar(body, product):
-    """A scalar COG must be a single band labeled with the product name."""
-    ok, detail = validate_tiff(body)
-    if not ok:
-        return False, detail
-    if not _HAS_GDALINFO:
-        return True, detail + " (band description check skipped: no gdal tools)"
-    os.makedirs(OUT, exist_ok=True)
-    p = os.path.join(OUT, "cogscalar.tif")
+    p = os.path.join(OUT, "cog.tif")
     with open(p, "wb") as f:
         f.write(body)
     info = subprocess.run(["gdalinfo", p], capture_output=True, text=True).stdout
     descs = re.findall(r"Description = (.+)", info)
-    if descs != [product]:
-        return False, f"band descriptions {descs}, expected ['{product}']"
+    expected = _COG_BAND_DESCS.get(product, [product])
+    if descs != expected:
+        return False, f"band descriptions {descs}, expected {expected}"
     return True, detail + f" desc={descs}"
 
 

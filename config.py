@@ -22,7 +22,10 @@ APP_CONFIG = {
 # can't drift out of sync. parse.py validates against the keys; process_data.py
 # reads ['search'] to fetch and ['cmap']/['label'] to render.
 HRRR_PRODUCTS = {
-    'winds':         {'search': ':[U|V]GRD:10 m',             'cmap': 'viridis',  'label': 'Wind Speed (m/s)'},
+    'wind_u':        {'search': ':[U|V]GRD:10 m',             'cmap': 'RdBu_r',   'label': 'Wind U Component (m/s)'},
+    'wind_v':        {'search': ':[U|V]GRD:10 m',             'cmap': 'RdBu_r',   'label': 'Wind V Component (m/s)'},
+    'wind_speed':    {'search': ':[U|V]GRD:10 m',             'cmap': 'viridis',  'label': 'Wind Speed (m/s)'},
+    'wind_vector':   {'search': ':[U|V]GRD:10 m',             'cmap': 'viridis',  'label': 'Wind (u/v m/s)'},
     'temp_2m':       {'search': ':TMP:2 m above ground:',     'cmap': 'RdYlBu_r', 'label': 'Temperature (K)'},
     'pbl_height':    {'search': ':HPBL:surface:',             'cmap': 'plasma',   'label': 'PBL Height (m)'},
     'smoke_massden': {'search': ':MASSDEN:8 m above ground:', 'cmap': 'YlOrRd',   'label': 'Smoke Mass Density (µg/m³)', 'scale': 1e9, 'vmin': 0, 'vmax': 250},
@@ -32,15 +35,8 @@ HRRR_PRODUCTS = {
     'dewpoint_2m':   {'search': ':DPT:2 m above ground:',     'cmap': 'RdYlBu_r', 'label': 'Dewpoint (K)'},
 }
 
-# Colormap for each band of the 3-band winds COG, keyed by the band name written
-# into the COG by convert.to_cog, so the band names and their
-# colormaps live in one place and can't drift. u and v are signed so they use a
-# diverging map, speed is magnitude so it uses a sequential one. Keyed by band
-# (not product), so it stays separate from HRRR_PRODUCTS above.
-WINDS_BAND_COLORMAPS = {
-    'u':     {'cmap': 'RdBu_r',  'label': 'Wind U Component (m/s)'},
-    'v':     {'cmap': 'RdBu_r',  'label': 'Wind V Component (m/s)'},
-    'speed': {'cmap': 'viridis', 'label': 'Wind Speed (m/s)'},
-}
+# 10 m wind products (all from the same U/V GRIB); grouped for the shared handling
+# scalars don't need: earth-relative rotation at regrid + band derivation in convert.
+WIND_PRODUCTS = ('wind_u', 'wind_v', 'wind_speed', 'wind_vector')
 
 NODATA = -9999

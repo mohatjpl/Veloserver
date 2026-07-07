@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import ( 
     Results, fetch, recent_time, PROJWIN, HRRR_PRODUCTS, HRRR_FORMATS,
     validate_gribjson, validate_tiff, validate_png, validate_nonempty,
-    validate_cog_winds, validate_cog_scalar,
+    validate_cog,
 )
 
 
@@ -21,9 +21,9 @@ def _validate(fmt, body, product=None):
     if fmt == "gribjson":
         return validate_gribjson(body, product)
     if fmt == "cog":
-        # winds = 3-band u/v/speed (speed==hypot(u,v)); scalars = 1 band named for the product
-        return (validate_cog_winds(body) if product == "winds"
-                else validate_cog_scalar(body, product))
+        # wind_vector = 2-band u/v; wind_u/wind_v/wind_speed = single named band;
+        # scalars = 1 band named for the product.
+        return validate_cog(body, product)
     if fmt == "geotiff":
         return validate_tiff(body)
     if fmt == "png":
@@ -51,35 +51,36 @@ def run(r):
     r.check("GET /", status == 200 and len(body) > 0, f"HTTP {status} bytes={len(body)}")
 
     r.section("HRRR velocity product (gribjson = U/V vectors)")
-    _run_case(r, "hrrr/winds/gribjson", f"/data?model=hrrr&product=winds&format=gribjson&time={T}", "gribjson", "winds")
-    _run_case(r, "hrrr/gribjson [default=winds]", f"/data?model=hrrr&format=gribjson&time={T}", "gribjson", "winds")
-    _run_case(r, "hrrr/winds/gribjson +projwin",
-              f"/data?model=hrrr&product=winds&format=gribjson&time={T}&projwin={PROJWIN}", "gribjson", "winds")
+    _run_case(r, "hrrr/wind_vector/gribjson", f"/data?model=hrrr&product=wind_vector&format=gribjson&time={T}", "gribjson", "wind_vector")
+    _run_case(r, "hrrr/gribjson [default=wind_vector]", f"/data?model=hrrr&format=gribjson&time={T}", "gribjson", "wind_vector")
+    _run_case(r, "hrrr/wind_vector/gribjson +projwin",
+              f"/data?model=hrrr&product=wind_vector&format=gribjson&time={T}&projwin={PROJWIN}", "gribjson", "wind_vector")
 
     r.section("HRRR raster products x {geotiff, png}")
     for prod in HRRR_PRODUCTS:
-        for fmt in ("geotiff", "png"):
+        fmts = ("geotiff",) if prod == "wind_vector" else ("geotiff", "png")
+        for fmt in fmts:
             _run_case(r, f"hrrr/{prod}/{fmt}", f"/data?model=hrrr&product={prod}&format={fmt}&time={T}", fmt, prod)
 
-    r.section("HRRR raster default route (winds)")
-    _run_case(r, "hrrr/geotiff [default]", f"/data?model=hrrr&format=geotiff&time={T}", "geotiff", "winds")
-    _run_case(r, "hrrr/png [default]", f"/data?model=hrrr&format=png&time={T}", "png", "winds")
+    r.section("HRRR raster default route (wind_vector)")
+    _run_case(r, "hrrr/geotiff [default]", f"/data?model=hrrr&format=geotiff&time={T}", "geotiff", "wind_vector")
+    # png [default] omitted: the default product is wind_vector, which has no png.
 
     r.section("HRRR raster + projwin subset")
     _run_case(r, "hrrr/temp_2m/geotiff +projwin",
               f"/data?model=hrrr&product=temp_2m&format=geotiff&time={T}&projwin={PROJWIN}", "geotiff", "temp_2m")
 
-    r.section("COG raster route (/cog?product=...&time=...) — every product")
+    r.section("COG raster route (/data?...&format=cog) — every product")
     for prod in HRRR_PRODUCTS:
-        _run_case(r, f"cog/{prod}", f"/cog?product={prod}&time={TZ}", "cog", prod)
+        _run_case(r, f"cog/{prod}", f"/data?model=hrrr&format=cog&product={prod}&time={TZ}", "cog", prod)
 
     r.section("GFS (gribjson only)")
-    _run_case(r, "gfs/gribjson [global]", f"/data?model=gfs&format=gribjson&time={T}", "gribjson", "winds")
-    _run_case(r, "gfs/gribjson +projwin", f"/data?model=gfs&format=gribjson&time={T}&projwin={PROJWIN}", "gribjson", "winds")
+    _run_case(r, "gfs/gribjson [global]", f"/data?model=gfs&format=gribjson&time={T}", "gribjson", "wind_vector")
+    _run_case(r, "gfs/gribjson +projwin", f"/data?model=gfs&format=gribjson&time={T}&projwin={PROJWIN}", "gribjson", "wind_vector")
 
     r.section("ECMWF (requires credentials)")
     if os.environ.get("VELOSERVER_ECMWF") == "1":
-        _run_case(r, "ecmwf/gribjson", f"/data?model=ecmwf&format=gribjson&time={T}", "gribjson", "winds")
+        _run_case(r, "ecmwf/gribjson", f"/data?model=ecmwf&format=gribjson&time={T}", "gribjson", "wind_vector")
     else:
         r.skipped("ecmwf/gribjson",
                   "set VELOSERVER_ECMWF=1 to test (needs .ecmwfapirc credentials)")

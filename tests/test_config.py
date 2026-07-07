@@ -2,8 +2,8 @@
 """Unit tests for config.py -- integrity of the product catalog and app config.
 
 These guard the merged HRRR_PRODUCTS catalog (one row per product carrying its
-GRIB `search` selector AND its colormap/label) plus the 3-band winds-COG colormap
-table and APP_CONFIG. Stdlib only (config imports only os).
+GRIB `search` selector AND its colormap/label) plus the WIND_PRODUCTS group and
+APP_CONFIG. Stdlib only (config imports only os).
 
 Run standalone:  python3 tests/test_config.py
 Or via the suite: python3 tests/run_all.py
@@ -30,17 +30,16 @@ def test_hrrr_products(r):
     smoke = prods.get("smoke_massden", {})
     r.check("smoke_massden has scale/vmin/vmax",
             "scale" in smoke and "vmin" in smoke and "vmax" in smoke, f"{ {k: smoke.get(k) for k in ('scale','vmin','vmax')} }")
-    r.check("winds is present (default product)", "winds" in prods, "")
+    r.check("wind_vector is present (default product)", "wind_vector" in prods, "")
 
 
-def test_winds_band_colormaps(r):
-    r.section("config.WINDS_BAND_COLORMAPS (3-band winds COG)")
-    bands = config.WINDS_BAND_COLORMAPS
-    # band names + order are the COG contract checked by validate_cog_winds
-    r.check("band keys are exactly [u, v, speed]", list(bands) == ["u", "v", "speed"], f"{list(bands)}")
-    for name, row in bands.items():
-        r.check(f"band {name}: has cmap + label",
-                isinstance(row.get("cmap"), str) and isinstance(row.get("label"), str), "")
+def test_wind_products(r):
+    r.section("config.WIND_PRODUCTS (10 m wind product group)")
+    wind = config.WIND_PRODUCTS
+    r.check("is exactly [wind_u, wind_v, wind_speed, wind_vector]",
+            list(wind) == ["wind_u", "wind_v", "wind_speed", "wind_vector"], f"{list(wind)}")
+    r.check("every wind product is in HRRR_PRODUCTS",
+            all(p in config.HRRR_PRODUCTS for p in wind), "")
 
 
 def test_app_config(r):
@@ -65,7 +64,7 @@ def test_app_config(r):
 
 def run(r):
     test_hrrr_products(r)
-    test_winds_band_colormaps(r)
+    test_wind_products(r)
     test_app_config(r)
 
 

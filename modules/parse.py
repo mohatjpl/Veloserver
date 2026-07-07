@@ -119,9 +119,12 @@ def parse_cog_time(time_param):
 
 def hrrr_format_error(product, format):
     """Return an error message if this product/format combination is unsupported,
-    else None. gribjson is only produced for winds; other products must use a
-    raster format or the COG route."""
-    if format == 'gribjson' and product != 'winds':
-        return (f"gribjson is only available for the 'winds' product; "
-                f"use geotiff, png, or the /cog route for '{product}'.")
+    else None. gribjson (the u/v particle payload) is only produced for the
+    wind_vector product; every product supports geotiff, png, and cog."""
+    if format == 'gribjson' and product != 'wind_vector':
+        return (f"gribjson is only available for the 'wind_vector' product; "
+                f"use geotiff, png, or format=cog for '{product}'.")
+    if format == 'png' and product == 'wind_vector':
+        return ("png is not available for 'wind_vector'; use geotiff/cog for the "
+                "u/v data, or product=wind_speed for a speed image.")
     return None

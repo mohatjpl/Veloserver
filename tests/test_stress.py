@@ -57,7 +57,7 @@ def timed_get(path, timeout=300):
 
 
 def cog(product, h):
-    return f"/cog?product={product}&time={hours_ago(h)}Z"
+    return f"/data?model=hrrr&format=cog&product={product}&time={hours_ago(h)}"
 
 
 def _validate(fmt, body, product=None):
@@ -76,11 +76,14 @@ def test_concurrent_identical(r):
     """N concurrent identical uncached requests -> all valid and byte-identical."""
     n = max(8, CONCURRENCY)
     cases = [
-        ("cog winds", cog("winds", 7), "cog", "winds"),
+        ("cog wind_vector", cog("wind_vector", 7), "cog", "wind_vector"),
         ("cog temp_2m", cog("temp_2m", 7), "cog", "temp_2m"),
-        ("hrrr winds gribjson", f"/data?model=hrrr&product=winds&format=gribjson&time={hours_ago(7)}", "gribjson", "winds"),
+        ("hrrr wind_vector gribjson", f"/data?model=hrrr&product=wind_vector&format=gribjson&time={hours_ago(7)}", "gribjson", "wind_vector"),
         ("hrrr temp_2m geotiff", f"/data?model=hrrr&product=temp_2m&format=geotiff&time={hours_ago(7)}", "geotiff", "temp_2m"),
-        ("hrrr winds png", f"/data?model=hrrr&product=winds&format=png&time={hours_ago(7)}", "png", "winds"),
+        ("hrrr wind_speed png", f"/data?model=hrrr&product=wind_speed&format=png&time={hours_ago(7)}", "png", "wind_speed"),
+        ("hrrr wind_u png", f"/data?model=hrrr&product=wind_u&format=png&time={hours_ago(7)}", "png", "wind_u"),
+        ("hrrr wind_v png", f"/data?model=hrrr&product=wind_v&format=png&time={hours_ago(7)}", "png", "wind_v"),
+        ("hrrr wind_v geotiff", f"/data?model=hrrr&product=wind_v&format=geotiff&time={hours_ago(7)}", "geotiff", "wind_v"),
     ]
     for name, path, fmt, product in cases:
         with ThreadPoolExecutor(max_workers=n) as ex:
@@ -113,7 +116,8 @@ def test_concurrent_png_renders(r):
     the batch keeps several in flight at once. Catches the crash/exception failure
     mode of thread-unsafe rendering (a 500 or an empty/invalid body)."""
     T = hours_ago(6)
-    specs = [(p, f"/data?model=hrrr&product={p}&format=png&time={T}") for p in HRRR_PRODUCTS]
+    png_products = [p for p in HRRR_PRODUCTS if p != "wind_vector"]
+    specs = [(p, f"/data?model=hrrr&product={p}&format=png&time={T}") for p in png_products]
     batch = specs * 3  # overlap renders even as some get cached
     with ThreadPoolExecutor(max_workers=max(8, CONCURRENCY)) as ex:
         results = list(ex.map(lambda s: (s[0], timed_get(s[1])), batch))
@@ -127,7 +131,7 @@ def test_concurrent_png_renders(r):
         else:
             why = validate_png(body)[1] if body else f"status={status}"
             bad.append(f"{product}: {why}")
-    r.check(f"concurrent PNG: {len(batch)} reqs / {len(HRRR_PRODUCTS)} products, all valid PNG",
+    r.check(f"concurrent PNG: {len(batch)} reqs / {len(png_products)} products, all valid PNG",
             not bad, f"valid={valid}/{len(batch)} failures={len(bad)}")
     for b in bad[:5]:
         r.record("  png failure", "FAIL", b)
@@ -141,8 +145,8 @@ def _slam_specs():
         for p in HRRR_PRODUCTS:
             specs.append((cog(p, h), "cog", p))
     for h in range(5, 13):
-        specs.append((f"/data?model=hrrr&product=winds&format=gribjson&time={hours_ago(h)}", "gribjson", "winds"))
-        specs.append((f"/data?model=gfs&format=gribjson&time={hours_ago(h)}", "gribjson", "winds"))
+        specs.append((f"/data?model=hrrr&product=wind_vector&format=gribjson&time={hours_ago(h)}", "gribjson", "wind_vector"))
+        specs.append((f"/data?model=gfs&format=gribjson&time={hours_ago(h)}", "gribjson", "wind_vector"))
     # duplicate the list so the same keys collide under concurrency (contention)
     return specs + specs
 
@@ -191,7 +195,7 @@ def _cache_bytes():
 
 
 def _cog_cache_basename(product, ts):
-    """The on-disk COG filename the server writes for ``/cog?product=<product>&time=<ts>``.
+    """The on-disk COG filename the server writes for ``/data?model=hrrr&format=cog&product=<product>&time=<ts>``.
 
     Mirrors ``process_data._cog_filename`` (kept in sync by hand rather than
     imported, since the stress test may run from a host without the server's
@@ -221,7 +225,7 @@ def _fill_past_budget(recent, target):
     n = 0
     fill = [(p, h) for h in range(6, 46) for p in HRRR_PRODUCTS]
     for p, h in fill:
-        if (p, h) in (("temp_2m", 46), ("winds", 4)):
+        if (p, h) in (("temp_2m", 46), ("wind_vector", 4)):
             continue
         status, body, _err, _lat = timed_get(cog(p, h))
         if status == 200 and body:
@@ -295,10 +299,10 @@ def test_lru_eviction(r):
     # a different cache key than the one we seeded.
     victim_ts = hours_ago(46)   # requested once, never touched again -> oldest
     recent_ts = hours_ago(4)    # kept in use throughout the fill -> survives
-    victim = f"/cog?product=temp_2m&time={victim_ts}Z"
-    recent = f"/cog?product=winds&time={recent_ts}Z"
+    victim = f"/data?model=hrrr&format=cog&product=temp_2m&time={victim_ts}Z"
+    recent = f"/data?model=hrrr&format=cog&product=wind_vector&time={recent_ts}Z"
     victim_name = _cog_cache_basename("temp_2m", victim_ts)
-    recent_name = _cog_cache_basename("winds", recent_ts)
+    recent_name = _cog_cache_basename("wind_vector", recent_ts)
 
     # Seed both into the cache. The victim must actually land on disk, or there is
     # nothing for eviction to remove and the assertion would be vacuous.

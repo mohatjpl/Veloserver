@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import re
 import argparse
 import subprocess
 import requests
@@ -11,7 +12,7 @@ from ecmwfapi import ECMWFDataServer
 from modules.parse import _safe_path, canonical_product, hrrr_format_error, normalize_date, projwin_to_string
 from modules.concurrency import _atomic_output, _download_lock
 from modules import convert
-from config import HRRR_PRODUCTS
+from config import HRRR_PRODUCTS, WIND_PRODUCTS
 
 # File extensions reused when deriving cache/output filenames. Centralized so the
 # literals aren't duplicated across the processing functions (Sonar S1192).
@@ -50,7 +51,7 @@ def parse_arguments():
     parser.add_argument('-f', '--format', type=str, required=False,
                         default='gribjson', help='Output file format (gribjson, geojson, geotiff, png)')
     parser.add_argument('-r', '--product', type=str, required=False,
-                        default='winds', help=f'Product name. Available: {list(HRRR_PRODUCTS.keys())}')
+                        default='wind_vector', help=f'Product name. Available: {list(HRRR_PRODUCTS.keys())}')
     parser.add_argument('-u', '--user_defined', type=str, required=False,
                         help='Path to user defined model configuration')
 
@@ -99,10 +100,12 @@ def _regrid_hrrr(product, date, hour, output_dir):
     with _download_lock(output_dir, f'hrrr-{product}-{date}T{hour}'):
         if os.path.exists(regrid_file):  # built by another worker while we waited
             return regrid_file
-        H = Herbie(date + ' ' + hour, model="hrrr", fxx=0, save_dir=output_dir)
-        download_file = str(H.download(HRRR_PRODUCTS[product]['search'], verbose=True))
+        search = HRRR_PRODUCTS[product]['search']
+        with _download_lock(output_dir, _hrrr_source_key(search, date, hour)):
+            H = Herbie(date + ' ' + hour, model="hrrr", fxx=0, save_dir=output_dir)
+            download_file = str(H.download(search, verbose=True))
         print('Downloaded', download_file)
-        _regrid_latlon(download_file, regrid_file, winds=(product == 'winds'))
+        _regrid_latlon(download_file, regrid_file, winds=(product in WIND_PRODUCTS))
     return regrid_file
 
 
@@ -123,7 +126,7 @@ def _convert_hrrr(output_grib, format, product):
     if format == 'gribjson':
         return convert.to_gribjson(output_grib, output_grib.replace(EXT_GRIB2, EXT_JSON))
     elif format == 'geotiff':
-        return convert.to_geotiff(output_grib, output_grib.replace(EXT_GRIB2, '.tif'))
+        return convert.to_geotiff(output_grib, output_grib.replace(EXT_GRIB2, '.tif'), product)
     elif format == 'png':
         return convert.to_png(output_grib, output_grib.replace(EXT_GRIB2, '.png'), product)
     return f'Unsupported format: {format}'
@@ -164,19 +167,28 @@ def _cog_filename(product, date, hour):
     return _cog_name_prefix(product, date, hour) + '-3857-cog.tif'
 
 
+def _hrrr_source_key(search, date, hour):
+    """Download-lock key, keyed on the GRIB search so products fetching the same
+    fields (all wind_* share :[U|V]GRD:10 m) serialize on one lock instead of
+    racing on Herbie's shared output file."""
+    safe = re.sub(r'[^A-Za-z0-9]+', '_', search).strip('_')
+    return f'hrrr-src-{safe}-{date}T{hour.replace(":", "")}'
+
+
 def _download_hrrr_native(product, date, hour, cache_dir):
     """Download the native-grid HRRR GRIB for the COG path, re-downloading once if
     the file is missing or unreadable by gdal (partial/corrupt fetch). Returns the
     GRIB path. product/date/hour are already validated at the request boundary."""
     search = HRRR_PRODUCTS[product]['search']
-    H = Herbie(date + ' ' + hour, model='hrrr', fxx=0, save_dir=cache_dir)
-    grib_file = str(H.download(search, verbose=False))
-    gdalinfo_result = subprocess.run(['gdalinfo', grib_file], capture_output=True)
-    if not os.path.exists(grib_file) or gdalinfo_result.returncode != 0:
-        print(f'[COG] GRIB file missing or corrupt, re-downloading: {grib_file}')
-        if os.path.exists(grib_file):
-            os.remove(grib_file)
+    with _download_lock(cache_dir, _hrrr_source_key(search, date, hour)):
+        H = Herbie(date + ' ' + hour, model='hrrr', fxx=0, save_dir=cache_dir)
         grib_file = str(H.download(search, verbose=False))
+        gdalinfo_result = subprocess.run(['gdalinfo', grib_file], capture_output=True)
+        if not os.path.exists(grib_file) or gdalinfo_result.returncode != 0:
+            print(f'[COG] GRIB file missing or corrupt, re-downloading: {grib_file}')
+            if os.path.exists(grib_file):
+                os.remove(grib_file)
+            grib_file = str(H.download(search, verbose=False))
     return grib_file
 
 
